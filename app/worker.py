@@ -13,8 +13,10 @@ QUEUE = "ai_analytics_queue"
 # Optional demo knob: artificial delay per task so queue depth is visible during a burst.
 WORKER_DELAY_SECONDS = float(os.getenv("WORKER_DELAY_SECONDS", "0"))
 
-STOPWORDS = set("the a an and or but if of to in on at for with is are was were be been it this that as by from "
-                "we you they i our your their its not no so than then there have has had will would can could".split())
+STOPWORDS = set(
+    "the a an and or but if of to in on at for with is are was were be been it this that as by from "
+    "we you they i our your their its not no so than then there have has had will would can could".split()
+)
 POSITIVE = {"great", "good", "excellent", "love", "fast", "smooth", "happy", "success", "improved", "stable", "win"}
 NEGATIVE = {"bad", "slow", "error", "fail", "failed", "timeout", "crash", "broken", "down", "outage", "angry", "churn"}
 
@@ -54,13 +56,22 @@ async def process_task_with_ai(client: httpx.AsyncClient, text_payload: str) -> 
             reason = f"AI_PROVIDER_EXCEPTION_{type(e).__name__}"
     else:
         reason = "NO_AI_TOKEN_CONFIGURED"
-    return {"insights": local_analysis(text_payload), "engine_status": f"FALLBACK_LOCAL_ANALYSIS ({reason})"}
+    return {
+        "insights": local_analysis(text_payload),
+        "engine_status": f"FALLBACK_LOCAL_ANALYSIS ({reason})",
+    }
 
 
 async def worker_orchestrator():
     """Background loop: BLPOP from Redis, run analysis, store the result."""
     print("AI worker daemon starting...")
-    redis_client = aioredis.from_url(settings.REDIS_URL, decode_responses=True)
+    redis_client = aioredis.from_url(
+        settings.REDIS_URL,
+        decode_responses=True,
+        socket_timeout=30,  # must be longer than the 5s BLPOP wait
+        socket_keepalive=True,
+        health_check_interval=30,
+    )
 
     async with httpx.AsyncClient() as http_client:
         while True:
@@ -96,6 +107,8 @@ async def worker_orchestrator():
             except asyncio.CancelledError:
                 await redis_client.aclose()
                 raise
+            except aioredis.TimeoutError:
+                continue  # idle wait expired, just poll again
             except Exception as e:
                 print(f"Worker loop exception: {e}")
                 await asyncio.sleep(2)
