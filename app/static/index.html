@@ -1,0 +1,208 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Event Analytics Engine: live console</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+:root{--bg:#eef1f4;--panel:#fff;--ink:#1b2430;--mute:#5d6b7c;--line:#d5dbe2;--accent:#2f4bff;--queued:#b7791f;--ok:#0f8a6d;--bad:#c0392b}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.5 "IBM Plex Sans",system-ui,sans-serif}
+main{max-width:1080px;margin:0 auto;padding:28px 20px 60px}
+h1{font-size:26px;font-weight:600;margin:0 0 4px;letter-spacing:-.01em}
+.sub{color:var(--mute);margin:0 0 24px;max-width:62ch}
+.health{display:inline-flex;gap:8px;align-items:center;font-size:13px;color:var(--mute);margin-bottom:18px}
+.dot{width:9px;height:9px;border-radius:50%;background:var(--queued)}
+.dot.up{background:var(--ok)}.dot.down{background:var(--bad)}
+.pipe{display:grid;grid-template-columns:1fr auto 1fr auto 1fr;align-items:stretch;gap:0;margin-bottom:22px}
+.stage{background:var(--panel);border:1.5px solid var(--ink);padding:16px 18px}
+.stage h2{font-size:14px;font-weight:600;margin:0 0 10px}
+.big{font:500 34px/1 "IBM Plex Mono",monospace}
+.cap{color:var(--mute);font-size:13px;margin-top:6px}
+.arrow{display:flex;align-items:center;justify-content:center;width:44px;font:500 13px "IBM Plex Mono",monospace;color:var(--accent)}
+.arrow::before{content:"";flex:1;border-top:2px dashed var(--accent)}
+.arrow.pulse::before{animation:flow .5s linear}
+@keyframes flow{from{border-color:var(--ink)}to{border-color:var(--accent)}}
+.cols{display:grid;grid-template-columns:minmax(0,5fr) minmax(0,7fr);gap:22px}
+.card{background:var(--panel);border:1px solid var(--line);padding:18px}
+.card h2{font-size:16px;margin:0 0 12px}
+textarea{width:100%;min-height:170px;font:13px/1.5 "IBM Plex Mono",monospace;border:1px solid var(--line);padding:10px;resize:vertical;color:var(--ink)}
+.row{display:flex;gap:8px;flex-wrap:wrap;margin:10px 0}
+button{font:500 14px "IBM Plex Sans",sans-serif;padding:9px 14px;border:1.5px solid var(--ink);background:var(--panel);color:var(--ink);cursor:pointer}
+button.primary{background:var(--accent);border-color:var(--accent);color:#fff}
+button:hover{filter:brightness(.95)}
+button:focus-visible,textarea:focus-visible{outline:3px solid var(--accent);outline-offset:2px}
+.chip{border:1px solid var(--line);font-size:12px;padding:3px 9px;background:var(--bg)}
+.feed{max-height:520px;overflow:auto}
+.ev{border-top:1px solid var(--line);padding:9px 0;font-size:13px}
+.ev:first-child{border-top:0}
+.head{display:flex;gap:10px;align-items:center;cursor:pointer}
+.t{font-family:"IBM Plex Mono",monospace;color:var(--mute)}
+.st{font-weight:600;min-width:84px}
+.st.queued{color:var(--queued)}.st.done{color:var(--ok)}.st.fail{color:var(--bad)}
+.lat{margin-left:auto;font-family:"IBM Plex Mono",monospace}
+pre{margin:8px 0 0;background:var(--bg);padding:10px;font:12px/1.5 "IBM Plex Mono",monospace;white-space:pre-wrap;word-break:break-word;display:none}
+.ev.open pre{display:block}
+.empty{color:var(--mute);padding:18px 0}
+.note{color:var(--mute);font-size:12px;margin-top:8px}
+@media(max-width:760px){.pipe{grid-template-columns:1fr}.arrow{width:auto;height:30px}.arrow::before{border-top:0;border-left:2px dashed var(--accent);flex:0 0 100%;height:100%;flex:none}.cols{grid-template-columns:1fr}}
+@media(prefers-reduced-motion:reduce){.arrow.pulse::before{animation:none}}
+</style>
+</head>
+<body>
+<main>
+  <h1>Event Analytics Engine: live console</h1>
+  <p class="sub">Send a real event to the gateway and watch it move through the queue to the AI worker. Nothing here is pre-recorded.</p>
+  <div class="health"><span class="dot" id="dot"></span><span id="healthTxt">Checking gateway…</span></div>
+
+  <section class="pipe" aria-label="Pipeline status">
+    <div class="stage"><h2>FastAPI gateway</h2><div class="big" id="nAcc">0</div><div class="cap">accepted (202) · avg <span id="avg">–</span> ms · p95 <span id="p95">–</span> ms</div></div>
+    <div class="arrow" id="a1"></div>
+    <div class="stage"><h2>Redis queue</h2><div class="big" id="nQ">–</div><div class="cap" id="qCap">waiting for stats endpoint</div></div>
+    <div class="arrow" id="a2"></div>
+    <div class="stage"><h2>AI worker</h2><div class="big" id="nDone">0</div><div class="cap">processed · <span id="nFail">0</span> failed</div></div>
+  </section>
+
+  <div class="cols">
+    <section class="card">
+      <h2>Send text for analysis</h2>
+      <div class="row" id="presets"></div>
+      <textarea id="body" spellcheck="false" aria-label="Text to analyse"></textarea>
+      <div class="row">
+        <button class="primary" id="send">Send event</button>
+        <button id="burst">Send 25 at once</button>
+      </div>
+      <div class="note">The burst fires 25 requests in parallel. The gateway should answer each one immediately, while the worker catches up in the background.</div>
+    </section>
+    <section class="card">
+      <h2>Live event feed</h2>
+      <div class="feed" id="feed"><div class="empty" id="empty">No events yet. Send one to see it appear here.</div></div>
+    </section>
+  </div>
+</main>
+
+<script>
+// Match these to the routes in app/main.py
+const CFG = {
+  ingest: "/api/v1/ingest",
+  status: "/api/v1/tasks/",
+  stats:  "/api/v1/stats",
+  health: "/health"         // GET
+};
+
+const PRESETS = {
+  "Support ticket": "Customer reports the checkout page is slow and the payment failed twice with a timeout error. They are angry and may churn if this is not fixed today.",
+  "Product review": "The new dashboard is great and the exports are fast. Setup was smooth and the team is happy with the improved reporting.",
+  "Incident log": "Database outage detected at 02:14. Connection errors spiked across the checkout service and several requests failed before the failover completed."
+};
+
+const $ = id => document.getElementById(id);
+const st = {acc:0,done:0,fail:0,lat:[]};
+let seq = 0;
+
+Object.keys(PRESETS).forEach(k=>{
+  const b=document.createElement("button");b.className="chip";b.textContent=k;
+  b.onclick=()=>{$("body").value=PRESETS[k]};
+  $("presets").appendChild(b);
+});
+$("body").value = PRESETS["Support ticket"];
+
+function pulse(el){el.classList.remove("pulse");void el.offsetWidth;el.classList.add("pulse")}
+function now(){return new Date().toLocaleTimeString([], {hour12:false})}
+function renderLat(){
+  if(!st.lat.length)return;
+  const s=[...st.lat].sort((a,b)=>a-b);
+  $("avg").textContent=Math.round(s.reduce((a,b)=>a+b,0)/s.length);
+  $("p95").textContent=Math.round(s[Math.min(s.length-1,Math.floor(s.length*.95))]);
+}
+function render(){$("nAcc").textContent=st.acc;$("nDone").textContent=st.done;$("nFail").textContent=st.fail;renderLat()}
+
+function addRow(label){
+  $("empty")?.remove();
+  const el=document.createElement("div");el.className="ev";
+  el.innerHTML='<div class="head"><span class="t"></span><span class="st queued">Sending</span><span class="lbl"></span><span class="lat"></span></div><pre></pre>';
+  el.querySelector(".t").textContent=now();
+  el.querySelector(".lbl").textContent=label;
+  el.querySelector(".head").onclick=()=>el.classList.toggle("open");
+  $("feed").prepend(el);
+  return {
+    set(txt,cls,lat,detail){
+      const s=el.querySelector(".st");s.textContent=txt;s.className="st "+cls;
+      if(lat!=null)el.querySelector(".lat").textContent=Math.round(lat)+" ms";
+      if(detail!=null)el.querySelector("pre").textContent=detail;
+    }
+  };
+}
+
+async function poll(id,row,detail){
+  for(let i=0;i<20;i++){
+    await new Promise(r=>setTimeout(r,1000));
+    try{
+      const r=await fetch(CFG.status+encodeURIComponent(id));
+      if(!r.ok)continue;
+      const j=await r.json();
+      const s=String(j.status||"").toLowerCase();
+      if(s==="processing")row.set("Processing","queued",null,detail);
+      const out=detail+"\n\n// worker result\n"+JSON.stringify(j,null,2);
+      if(s==="completed"){st.done++;row.set("Processed","done",null,out);render();pulse($("a2"));return}
+      if(["failed","error"].includes(s)){st.fail++;row.set("Failed","fail",null,out);render();return}
+    }catch(e){}
+  }
+  row.set("Accepted","queued",null,detail+"\n\n// no result reported yet");
+}
+
+async function sendOne(obj,label){
+  const row=addRow(label||obj.data_stream.slice(0,38)+"…");
+  const t0=performance.now();
+  try{
+    const r=await fetch(CFG.ingest,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(obj)});
+    const lat=performance.now()-t0;
+    const txt=await r.text();let j=null;try{j=JSON.parse(txt)}catch(e){}
+    const detail="// request\n"+JSON.stringify(obj,null,2)+"\n\n// gateway response ("+r.status+")\n"+(j?JSON.stringify(j,null,2):txt);
+    if(!r.ok){st.fail++;row.set("Rejected "+r.status,"fail",lat,detail);render();return}
+    st.acc++;st.lat.push(lat);render();pulse($("a1"));
+    row.set("Queued","queued",lat,detail);
+    const id=j&&(j.event_id||j.job_id||j.id||j.task_id);
+    if(id)poll(id,row,detail);
+  }catch(e){
+    st.fail++;row.set("Unreachable","fail",null,"Could not reach "+CFG.ingest+": "+e.message);render();
+  }
+}
+
+$("send").onclick=()=>{
+  const text=$("body").value.trim();
+  if(text.length<10){alert("Enter at least 10 characters of text.");return}
+  sendOne({data_stream:text});
+};
+$("burst").onclick=()=>{
+  const texts=Object.values(PRESETS);
+  for(let i=0;i<25;i++){
+    const n=++seq;
+    sendOne({data_stream:texts[i%texts.length]+" (ref "+n+")"},"burst #"+n);
+  }
+};
+
+async function tick(){
+  try{
+    const r=await fetch(CFG.health);
+    $("dot").className="dot "+(r.ok?"up":"down");
+    $("healthTxt").textContent=r.ok?"Gateway online":"Gateway returned "+r.status;
+  }catch(e){$("dot").className="dot down";$("healthTxt").textContent="Gateway unreachable"}
+  try{
+    const r=await fetch(CFG.stats);
+    if(r.ok){
+      const j=await r.json();
+      const k=Object.keys(j).find(k=>/queue|depth|len|pending/i.test(k)&&typeof j[k]==="number");
+      if(k){$("nQ").textContent=j[k];$("qCap").textContent=k.replace(/_/g," ")}
+      const d=Object.keys(j).find(k=>/processed|completed/i.test(k)&&typeof j[k]==="number");
+      if(d)$("nDone").textContent=Math.max(st.done,j[d]);
+    }
+  }catch(e){}
+}
+tick();setInterval(tick,2500);
+</script>
+</body>
+</html>
