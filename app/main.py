@@ -1,6 +1,7 @@
 import asyncio
 import json
 import os
+import time
 import uuid
 from contextlib import asynccontextmanager
 
@@ -46,6 +47,7 @@ app = FastAPI(
 
 class AnalyticsPayload(BaseModel):
     data_stream: str = Field(..., min_length=10, description="Raw text data stream targeted for asynchronous AI ingestion.")
+    use_ai: bool = True
 
 
 class TaskTracker(BaseModel):
@@ -86,7 +88,13 @@ async def ingest_stream(payload: AnalyticsPayload):
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Ingestion network database engine disconnected.")
     try:
         task_id = str(uuid.uuid4())
-        job = {"task_id": task_id, "status": "QUEUED", "payload": payload.data_stream}
+        job = {
+            "task_id": task_id,
+            "status": "QUEUED",
+            "payload": payload.data_stream,
+            "use_ai": payload.use_ai,
+            "created_at": time.time(),
+        }
         async with redis_client.pipeline(transaction=True) as pipe:
             await pipe.set(f"task:{task_id}", json.dumps(job), ex=86400)  # auto-expire after 24h
             await pipe.rpush(QUEUE, task_id)

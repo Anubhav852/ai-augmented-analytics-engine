@@ -148,4 +148,4 @@ docker run -p 8000:8000 -e REDIS_URL=redis://host.docker.internal:6379/0 analyti
 
 - On the free tier the worker shares a process with the API. In production it would be its own service.
 - The free Redis instance gives no durability guarantees.
-- Results are fetched by polling. WebSockets or server-sent events would be a natural next step.
+- Results are fetched by polling. WebSockets or server-sent events would be a natural next step.    

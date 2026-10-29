@@ -30,7 +30,7 @@ h1{font-size:26px;font-weight:600;margin:0 0 4px;letter-spacing:-.01em}
 .card{background:var(--panel);border:1px solid var(--line);padding:18px}
 .card h2{font-size:16px;margin:0 0 12px}
 textarea{width:100%;min-height:170px;font:13px/1.5 "IBM Plex Mono",monospace;border:1px solid var(--line);padding:10px;resize:vertical;color:var(--ink)}
-.row{display:flex;gap:8px;flex-wrap:wrap;margin:10px 0}
+.row{display:flex;gap:8px;flex-wrap:wrap;margin:10px 0;align-items:center}
 button{font:500 14px "IBM Plex Sans",sans-serif;padding:9px 14px;border:1.5px solid var(--ink);background:var(--panel);color:var(--ink);cursor:pointer}
 button.primary{background:var(--accent);border-color:var(--accent);color:#fff}
 button:hover{filter:brightness(.95)}
@@ -39,23 +39,23 @@ button:focus-visible,textarea:focus-visible{outline:3px solid var(--accent);outl
 .feed{max-height:520px;overflow:auto}
 .ev{border-top:1px solid var(--line);padding:9px 0;font-size:13px}
 .ev:first-child{border-top:0}
-.head{display:flex;gap:10px;align-items:center;cursor:pointer}
+.head{display:flex;gap:10px;align-items:center;cursor:pointer;flex-wrap:wrap}
 .t{font-family:"IBM Plex Mono",monospace;color:var(--mute)}
-.st{font-weight:600;min-width:84px}
+.st{font-weight:600}
 .st.queued{color:var(--queued)}.st.done{color:var(--ok)}.st.fail{color:var(--bad)}
 .lat{margin-left:auto;font-family:"IBM Plex Mono",monospace}
 pre{margin:8px 0 0;background:var(--bg);padding:10px;font:12px/1.5 "IBM Plex Mono",monospace;white-space:pre-wrap;word-break:break-word;display:none}
 .ev.open pre{display:block}
 .empty{color:var(--mute);padding:18px 0}
 .note{color:var(--mute);font-size:12px;margin-top:8px}
-@media(max-width:760px){.pipe{grid-template-columns:1fr}.arrow{width:auto;height:30px}.arrow::before{border-top:0;border-left:2px dashed var(--accent);flex:0 0 100%;height:100%;flex:none}.cols{grid-template-columns:1fr}}
+@media(max-width:760px){.pipe{grid-template-columns:1fr}.arrow{width:auto;height:30px}.arrow::before{border-top:0;border-left:2px dashed var(--accent);flex:none;height:100%}.cols{grid-template-columns:1fr}}
 @media(prefers-reduced-motion:reduce){.arrow.pulse::before{animation:none}}
 </style>
 </head>
 <body>
 <main>
   <h1>Event Analytics Engine: live console</h1>
-  <p class="sub">Send a real event to the gateway and watch it move through the queue to the AI worker. Nothing here is pre-recorded.</p>
+  <p class="sub">Send real text to the gateway and watch it move through the queue to the worker. Nothing here is pre-recorded. Untick "Use real AI" to compare the rule-based analyser with a real model.</p>
   <div class="health"><span class="dot" id="dot"></span><span id="healthTxt">Checking gateway…</span></div>
 
   <section class="pipe" aria-label="Pipeline status">
@@ -74,6 +74,7 @@ pre{margin:8px 0 0;background:var(--bg);padding:10px;font:12px/1.5 "IBM Plex Mon
       <div class="row">
         <button class="primary" id="send">Send event</button>
         <button id="burst">Send 25 at once</button>
+        <label style="display:flex;align-items:center;gap:6px;font-size:14px"><input type="checkbox" id="useAi" checked> Use real AI</label>
       </div>
       <div class="note">The burst fires 25 requests in parallel. The gateway should answer each one immediately, while the worker catches up in the background.</div>
     </section>
@@ -85,12 +86,11 @@ pre{margin:8px 0 0;background:var(--bg);padding:10px;font:12px/1.5 "IBM Plex Mon
 </main>
 
 <script>
-// Match these to the routes in app/main.py
 const CFG = {
   ingest: "/api/v1/ingest",
   status: "/api/v1/tasks/",
   stats:  "/api/v1/stats",
-  health: "/health"         // GET
+  health: "/health"
 };
 
 const PRESETS = {
@@ -138,8 +138,8 @@ function addRow(label){
 }
 
 async function poll(id,row,detail){
-  for(let i=0;i<20;i++){
-    await new Promise(r=>setTimeout(r,1000));
+  for(let i=0;i<40;i++){
+    await new Promise(r=>setTimeout(r,600));
     try{
       const r=await fetch(CFG.status+encodeURIComponent(id));
       if(!r.ok)continue;
@@ -147,7 +147,13 @@ async function poll(id,row,detail){
       const s=String(j.status||"").toLowerCase();
       if(s==="processing")row.set("Processing","queued",null,detail);
       const out=detail+"\n\n// worker result\n"+JSON.stringify(j,null,2);
-      if(s==="completed"){st.done++;row.set("Processed","done",null,out);render();pulse($("a2"));return}
+      if(s==="completed"){
+        const ai=String(j.execution_logs||"").startsWith("AI");
+        const sec=ms=>ms>=1000?(ms/1000).toFixed(1)+" s":Math.round(ms)+" ms";
+        st.done++;
+        row.set("Processed · "+(ai?"real AI ":"rule-based ")+sec(j.processing_ms||0)+" · total "+sec(j.total_ms||0),"done",null,out);
+        render();pulse($("a2"));return;
+      }
       if(["failed","error"].includes(s)){st.fail++;row.set("Failed","fail",null,out);render();return}
     }catch(e){}
   }
@@ -175,13 +181,13 @@ async function sendOne(obj,label){
 $("send").onclick=()=>{
   const text=$("body").value.trim();
   if(text.length<10){alert("Enter at least 10 characters of text.");return}
-  sendOne({data_stream:text});
+  sendOne({data_stream:text,use_ai:$("useAi").checked});
 };
 $("burst").onclick=()=>{
   const texts=Object.values(PRESETS);
   for(let i=0;i<25;i++){
     const n=++seq;
-    sendOne({data_stream:texts[i%texts.length]+" (ref "+n+")"},"burst #"+n);
+    sendOne({data_stream:texts[i%texts.length]+" (ref "+n+")",use_ai:$("useAi").checked},"burst #"+n);
   }
 };
 
