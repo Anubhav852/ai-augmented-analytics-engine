@@ -61,26 +61,33 @@ async def process_task_with_ai(client: httpx.AsyncClient, text: str, use_ai: boo
         reason = "NO_AI_TOKEN_CONFIGURED"
     else:
         try:
+            body = {
+                "model": settings.AI_MODEL,
+                "messages": [
+                    {"role": "system", "content": SYSTEM_PROMPT},
+                    {"role": "user", "content": text},
+                ],
+                "temperature": 0.2,
+                "max_tokens": 1000,  # reasoning models spend tokens thinking before they answer
+            }
+            if "gpt-oss" in settings.AI_MODEL:
+                body["reasoning_effort"] = "low"  # keeps latency down
+
             response = await client.post(
                 settings.AI_API_URL,
                 headers={"Authorization": f"Bearer {settings.AI_API_TOKEN}"},
-                json={
-                    "model": settings.AI_MODEL,
-                    "messages": [
-                        {"role": "system", "content": SYSTEM_PROMPT},
-                        {"role": "user", "content": text},
-                    ],
-                    "temperature": 0.2,
-                    "max_tokens": 250,
-                },
-                timeout=15.0,
+                json=body,
+                timeout=20.0,
             )
             if response.status_code == 200:
-                content = response.json()["choices"][0]["message"]["content"]
-                insights = parse_model_json(content)
-                insights["source"] = f"AI model: {settings.AI_MODEL}"
-                return {"insights": insights, "engine_status": f"AI_SUCCESS ({settings.AI_MODEL})"}
-            reason = f"AI_PROVIDER_ERROR_CODE_{response.status_code}"
+                content = (response.json()["choices"][0]["message"].get("content") or "").strip()
+                if content:
+                    insights = parse_model_json(content)
+                    insights["source"] = f"AI model: {settings.AI_MODEL}"
+                    return {"insights": insights, "engine_status": f"AI_SUCCESS ({settings.AI_MODEL})"}
+                reason = "EMPTY_MODEL_OUTPUT"
+            else:
+                reason = f"AI_PROVIDER_ERROR_CODE_{response.status_code}: {response.text[:200]}"
         except Exception as e:
             reason = f"AI_PROVIDER_EXCEPTION_{type(e).__name__}"
     return {"insights": local_analysis(text), "engine_status": f"FALLBACK_LOCAL_ANALYSIS ({reason})"}
